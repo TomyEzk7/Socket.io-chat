@@ -2,39 +2,76 @@ import { createServer } from 'node:http'
 import express from 'express'
 import { Server } from 'socket.io'
 
-import logger from 'morgan' // loggea cada peticion
-import { fileURLToPath } from 'node:url' // para convertir la url en una ruta usable
-import { dirname, join } from 'node:path' // dirname devuelve directorio que contiene al archivo que le paso
+import logger from 'morgan'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import sqlite3 from 'sqlite3'
+import { open } from 'sqlite'
 
-const PORT = process.env.PORT ?? 3000
+const PORT = process.env.PORT ?? 1234
+const HOST = '0.0.0.0' // Habilita conexiones desde cualquier dispositivo de la red local (conectarse con http:\\192.186.100.24:3000)
 
 const app = express()
 const httpServer = createServer(app)
-const io = new Server(httpServer)
+const io = new Server(httpServer, {
+  connectionStateRecovery: {}
+});
 
-app.use (logger('dev'))
+const db = await open ({
+  filename: 'Socket.io-chat-db',
+  driver: sqlite3.Database
+});
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_offset TEXT UNIQUE, 
+  content TEXT
+  );
+`);
 
-app.get('/', (req,res) => {
-    res.sendFile(join(__dirname,'client','index.html')) // esto es para que sirva bien el archivo desde cualquier lugar donde se ejecute el proyecto
-})
+app.use(logger('dev'))
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
-httpServer.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`)
+app.get('/', (req, res) => {
+  res.sendFile(join(__dirname, 'client', 'index.html'))
 })
 
 io.on('connection', (socket) => {
-        socket.emit('firstConnection', 'Welcome to Socket.io Chat!')
-      })
+  socket.on('chat message', async (msg) => {
+    let result;
+    try {
+      // almacenar el mensaje en la base de datos
+      result = await db.run('INSERT INTO messages (content) VALUES (?)', msg);
+    } catch (e) {
+      // TODO manejar el fallo
+      return;
+    }
+    // incluir el offset con el mensaje
+    io.emit('chat message', msg, result.lastID);
+    console.log('message:', msg)
+  })
 
-io.on('connection', (socket) => {
-    console.log('A user has connected!')
-    
-    socket.on('chat message', (msg) => { 
-        console.log('message: ' + msg)
-        io.emit('chat message', msg);
+  socket.on('disconnect', () => {
+    console.log('A user has disconnected!')
   });
 });
 
+if (!socket.recovered) {
+    // si la recuperación del estado de conexión no fue exitosa
+    try {
+      await db.each('SELECT id, content FROM messages WHERE id > ?',
+        [socket.handshake.auth.serverOffset || 0],
+        (_err, row) => {
+          socket.emit('chat message', row.content, row.id);
+        }
+      )
+    } catch (e) {
+      // algo salió mal
+    }
+  }
+
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Server listening on http://<TU-IP-LOCAL>:${PORT}`)
+})

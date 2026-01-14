@@ -85,13 +85,17 @@
       <form id="form">
         <input id="input" autocomplete="off" />
         <button>Send</button>
+        <button id="toggle-btn">Disconnect</button>
       </form>
     </div>
-
-    
-
     <script>
-      const socket = io();
+
+  
+      const socket = io({
+        auth: {
+          serverOffset: 0
+        }
+      });
 
       const form = document.getElementById('form');
       const input = document.getElementById('input');
@@ -105,11 +109,12 @@
         }
       });
 
-      socket.on('chat message', msg => {
+      socket.on('chat message', (msg, serverOffset) => {
         const li = document.createElement('li');
         li.textContent = msg;
         messages.appendChild(li);
         messages.scrollTop = messages.scrollHeight;
+        socket.auth.serverOffset = serverOffset;
       });
 
       socket.on('firstConnection', (arg) => {
@@ -119,6 +124,19 @@
         messages.scrollTop = messages.scrollHeight;
       });
       
+        const toggleButton = document.getElementById('toggle-btn');
+
+
+  toggleButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (socket.connected) {
+      toggleButton.innerText = 'Connect';
+      socket.disconnect();
+    } else {
+      toggleButton.innerText = 'Disconnect';
+      socket.connect();
+    }
+  });
     </script>
   </body>
 </html>
