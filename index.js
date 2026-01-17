@@ -18,7 +18,7 @@ const io = new Server(httpServer, {
 });
 
 const db = await open ({
-  filename: 'Socket.io-chat-db',
+  filename: 'Socket.io-chat.db',
   driver: sqlite3.Database
 });
 
@@ -63,7 +63,7 @@ io.on('connection', async (socket) => {
         }
       )
     } catch (e) {
-      // algo salió mal
+      console.log(e)
     }
   }
 
@@ -73,5 +73,5 @@ io.on('connection', async (socket) => {
 });
 
 httpServer.listen(PORT, HOST, () => {
-  console.log(`Server listening on http://<TU-IP-LOCAL>:${PORT}`)
+  console.log(`Server listening on http://localhost:${PORT}`)
 })
