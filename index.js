@@ -38,7 +38,7 @@ app.get('/', (req, res) => {
   res.sendFile(join(__dirname, 'client', 'index.html'))
 })
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   socket.on('chat message', async (msg) => {
     let result;
     try {
@@ -53,12 +53,7 @@ io.on('connection', (socket) => {
     console.log('message:', msg)
   })
 
-  socket.on('disconnect', () => {
-    console.log('A user has disconnected!')
-  });
-});
-
-if (!socket.recovered) {
+  if (!socket.recovered) {
     // si la recuperación del estado de conexión no fue exitosa
     try {
       await db.each('SELECT id, content FROM messages WHERE id > ?',
@@ -71,6 +66,11 @@ if (!socket.recovered) {
       // algo salió mal
     }
   }
+
+  socket.on('disconnect', () => {
+    console.log('A user has disconnected!')
+  });
+});
 
 httpServer.listen(PORT, HOST, () => {
   console.log(`Server listening on http://<TU-IP-LOCAL>:${PORT}`)
