@@ -19,7 +19,6 @@
         background: #111;
       }
 
-      /* 🔲 CONTENEDOR DEL CHAT */
       .chat-container {
         width: 450px;
         height: 600px;
@@ -30,7 +29,6 @@
         box-shadow: 0 10px 30px rgba(0,0,0,0.4);
       }
 
-      /* MENSAJES */
       #messages {
         flex: 1;
         list-style: none;
@@ -47,15 +45,12 @@
         font-size: 0.9rem;
       }
 
-      /* FORM */
       #form {
         display: flex;
         padding:0.5rem;
         border-top: 1px solid #ddd;
         background: #f5f5f5;
         border-radius: 20px;
-      
-        
       }
 
       #input {
@@ -91,12 +86,15 @@
       </form>
     </div>
     <script>
-
+      let counter = 0;
   
       const socket = io({
         auth: {
           serverOffset: 0
-        }
+        },
+
+        AckTimeout: 5000, 
+        retries: 3
       });
 
       const form = document.getElementById('form');
@@ -106,28 +104,27 @@
       form.addEventListener('submit', e => {
         e.preventDefault();
         if (input.value) {
-          socket.emit('chat message', input.value);
+          const clientOffset = `${socket.id}-${counter++}`;
+          socket.emit('chat message', input.value, clientOffset);
           input.value = '';
         }
       });
 
-      socket.on('chat message', (msg, serverOffset) => {
+      socket.on('chat message', (msg, serverOffset, clientAck) => { // El clientAck es lo que espera el servidor para saber que el cliente recibio el evento
         const li = document.createElement('li');
         li.textContent = msg;
         messages.appendChild(li);
         messages.scrollTop = messages.scrollHeight;
+
         socket.auth.serverOffset = serverOffset;
-      });
 
-      socket.on('firstConnection', (arg) => {
-        const li = document.createElement('li');
-        li.textContent = arg;
-        messages.appendChild(li);
-        messages.scrollTop = messages.scrollHeight;
-      });
-      
-        const toggleButton = document.getElementById('toggle-btn');
+        if (typeof clientAck === 'function') {
 
+          clientAck();
+        }
+      });
+    
+  const toggleButton = document.getElementById('toggle-btn');
 
   toggleButton.addEventListener('click', (e) => {
     e.preventDefault();

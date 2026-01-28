@@ -9,7 +9,7 @@ import sqlite3 from 'sqlite3'
 import { open } from 'sqlite'
 
 const PORT = process.env.PORT ?? 1234
-const HOST = '0.0.0.0' // Habilita conexiones desde cualquier dispositivo de la red local (conectarse con http:\\192.186.100.24:3000)
+const HOST = '0.0.0.0' // Habilita conexiones desde cualquier dispositivo de la red local
 
 const app = express()
 const httpServer = createServer(app)
@@ -17,6 +17,29 @@ const io = new Server(httpServer, {
   connectionStateRecovery: {}
 });
 
+function emitWithRetry(socket, event, args, retries = 3) {
+  if (!socket.connected) return;
+  
+  socket
+    .timeout(5000)
+    .emit(event, ...args, (err) => {
+      if (err) {
+        if (retries > 0) {
+          console.log (`retrying ${event}, remaining attemps: ${retries}`)
+          emitWithRetry(socket, event, args, retries - 1)
+        } else {
+          console.log(`the event ${event} has failed to send`)
+        }
+      }
+    })
+}
+
+function broadcastWithRetry(io, event, args, retries = 3) {
+  for (const socket of io.sockets.sockets.values()){
+    emitWithRetry(socket, event, args, retries);
+  }
+}
+ 
 const db = await open ({
   filename: 'Socket.io-chat.db',
   driver: sqlite3.Database
@@ -39,37 +62,47 @@ app.get('/', (req, res) => {
 })
 
 io.on('connection', async (socket) => {
-  socket.on('chat message', async (msg) => {
+
+  socket.on('chat message', async (msg, clientOffset, serverAck) => {
     let result;
     try {
-      // almacenar el mensaje en la base de datos
-      result = await db.run('INSERT INTO messages (content) VALUES (?)', msg);
+      result = await db.run(
+        'INSERT INTO messages (content, client_offset) VALUES (?, ?)',
+        msg,
+        clientOffset
+      );
     } catch (e) {
-      // TODO manejar el fallo
+      if (e.errno === 19 && typeof serverAck === 'function') {
+        serverAck();
+      }
       return;
     }
-    // incluir el offset con el mensaje
-    io.emit('chat message', msg, result.lastID);
-    console.log('message:', msg)
-  })
+
+    broadcastWithRetry(io, 'chat message', [msg, result.lastID]);
+
+    if (typeof serverAck === 'function') {
+      serverAck();
+    }
+  }); 
 
   if (!socket.recovered) {
-    // si la recuperación del estado de conexión no fue exitosa
     try {
-      await db.each('SELECT id, content FROM messages WHERE id > ?',
+      await db.each(
+        'SELECT id, content FROM messages WHERE id > ?',
         [socket.handshake.auth.serverOffset || 0],
         (_err, row) => {
-          socket.emit('chat message', row.content, row.id);
+          emitWithRetry(socket, 'chat message', [row.content, row.id]);
         }
-      )
+      );
     } catch (e) {
-      console.log(e)
+      console.log(e);
     }
   }
 
   socket.on('disconnect', () => {
-    console.log('A user has disconnected!')
+    console.log('A user has disconnected!');
   });
+
 });
 
 httpServer.listen(PORT, HOST, () => {
