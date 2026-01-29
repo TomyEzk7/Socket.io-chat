@@ -1,110 +1,222 @@
-import { createServer } from 'node:http'
-import express from 'express'
-import { Server } from 'socket.io'
+import { createServer } from 'node:http';
+import express from 'express';
+import { Server } from 'socket.io';
+import logger from 'morgan';
 
-import logger from 'morgan'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
-import sqlite3 from 'sqlite3'
-import { open } from 'sqlite'
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-const PORT = process.env.PORT ?? 1234
-const HOST = '0.0.0.0' // Habilita conexiones desde cualquier dispositivo de la red local
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
 
-const app = express()
-const httpServer = createServer(app)
-const io = new Server(httpServer, {
-  connectionStateRecovery: {}
-});
+import cluster from 'node:cluster';
+import { availableParallelism } from 'node:os';
+
+import { createAdapter, setupPrimary } from '@socket.io/cluster-adapter';
+
+import { createClient } from 'redis'
+
+/* =========================
+   CONFIG
+========================= */
+
+const PORT = process.env.PORT ?? 3000;
+const HOST = '0.0.0.0';
+
+/* =========================
+   HELPERS
+========================= */
 
 function emitWithRetry(socket, event, args, retries = 3) {
   if (!socket.connected) return;
-  
+
   socket
     .timeout(5000)
     .emit(event, ...args, (err) => {
-      if (err) {
-        if (retries > 0) {
-          console.log (`retrying ${event}, remaining attemps: ${retries}`)
-          emitWithRetry(socket, event, args, retries - 1)
-        } else {
-          console.log(`the event ${event} has failed to send`)
-        }
+      if (err && retries > 0) {
+        emitWithRetry(socket, event, args, retries - 1);
       }
-    })
+    });
 }
 
-function broadcastWithRetry(io, event, args, retries = 3) {
-  for (const socket of io.sockets.sockets.values()){
-    emitWithRetry(socket, event, args, retries);
+/* =========================
+   WORKER LOGIC
+========================= */
+
+async function startWorker() {
+  const app = express();
+  const server = createServer(app);
+
+  const io = new Server(server, {
+    connectionStateRecovery: {},
+    adapter: createAdapter()
+  });
+
+  /* ---------- DB ---------- */
+
+  const db = await open({
+    filename: 'Socket.io-chat.db',
+    driver: sqlite3.Database
+  });
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_offset TEXT UNIQUE,
+      content TEXT
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS private_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_user_id INTEGER NOT NULL,
+      to_user_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  /* ---------- EXPRESS ---------- */
+
+  app.use(logger('dev'));
+
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  app.use(express.static(join(__dirname, 'client')));
+
+  app.get('/', (req, res) => {
+    res.sendFile(join(__dirname, 'client', 'index.html'));
+  });
+
+  /* ---------- STATE ---------- */
+
+  const users = new Map();
+
+  function createPrivateRoom(a, b) {
+    return [a, b].sort((x, y) => x - y).join('#');
   }
-}
- 
-const db = await open ({
-  filename: 'Socket.io-chat.db',
-  driver: sqlite3.Database
-});
 
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_offset TEXT UNIQUE, 
-  content TEXT
-  );
-`);
+  /* ---------- SOCKET.IO ---------- */
 
-app.use(logger('dev'))
+  io.on('connection', async (socket) => {
+    const { username, serverOffset = 0 } = socket.handshake.auth;
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-app.get('/', (req, res) => {
-  res.sendFile(join(__dirname, 'client', 'index.html'))
-})
-
-io.on('connection', async (socket) => {
-
-  socket.on('chat message', async (msg, clientOffset, serverAck) => {
-    let result;
-    try {
-      result = await db.run(
-        'INSERT INTO messages (content, client_offset) VALUES (?, ?)',
-        msg,
-        clientOffset
-      );
-    } catch (e) {
-      if (e.errno === 19 && typeof serverAck === 'function') {
-        serverAck();
-      }
+    if (!username) {
+      socket.disconnect();
       return;
     }
 
-    broadcastWithRetry(io, 'chat message', [msg, result.lastID]);
+    let user = await db.get(
+      'SELECT id FROM users WHERE username = ?',
+      username
+    );
 
-    if (typeof serverAck === 'function') {
-      serverAck();
+    let userId;
+    if (!user) {
+      const result = await db.run(
+        'INSERT INTO users (username) VALUES (?)',
+        username
+      );
+      userId = result.lastID;
+    } else {
+      userId = user.id;
     }
-  }); 
 
-  if (!socket.recovered) {
-    try {
+    socket.userId = userId;
+    users.set(userId, socket.id);
+
+    /* ----- CHAT GLOBAL ----- */
+
+    socket.on('chat message', async (msg, clientOffset, ack) => {
+      try {
+        const result = await db.run(
+          'INSERT INTO messages (content, client_offset) VALUES (?, ?)',
+          msg,
+          clientOffset
+        );
+
+        io.emit('chat message', msg, result.lastID);
+        ack?.();
+      } catch {
+        ack?.();
+      }
+    });
+
+    /* ----- CHAT PRIVADO ----- */
+
+    socket.on('private message', async ({ toUserId, msg }, _, ack) => {
+      if (!toUserId || !msg) return;
+
+      const room = createPrivateRoom(socket.userId, toUserId);
+
+      socket.join(room);
+
+      const toSocketId = users.get(toUserId);
+      if (toSocketId) {
+        io.sockets.sockets.get(toSocketId)?.join(room);
+      }
+
+      const result = await db.run(
+        `INSERT INTO private_messages
+         (from_user_id, to_user_id, content)
+         VALUES (?, ?, ?)`,
+        socket.userId,
+        toUserId,
+        msg
+      );
+
+      io.to(room).emit('private message', {
+        fromUserId: socket.userId,
+        msg,
+        id: result.lastID
+      });
+
+      ack?.();
+    });
+
+    /* ----- RECOVERY ----- */
+
+    if (!socket.recovered) {
       await db.each(
         'SELECT id, content FROM messages WHERE id > ?',
-        [socket.handshake.auth.serverOffset || 0],
+        [serverOffset],
         (_err, row) => {
           emitWithRetry(socket, 'chat message', [row.content, row.id]);
         }
       );
-    } catch (e) {
-      console.log(e);
     }
-  }
 
-  socket.on('disconnect', () => {
-    console.log('A user has disconnected!');
+    socket.on('disconnect', () => {
+      users.delete(socket.userId);
+      console.log('A user has disconnected!')
+    });
   });
 
-});
+  server.listen(PORT, HOST, () => {
+    console.log(`Worker ${process.pid} escuchando en ${PORT}`);
+  });
+}
 
-httpServer.listen(PORT, HOST, () => {
-  console.log(`Server listening on http://localhost:${PORT}`)
-})
+/* =========================
+   CLUSTER
+========================= */
+
+if (cluster.isPrimary) {
+  setupPrimary();
+
+  const cpus = availableParallelism();
+  for (let i = 0; i < cpus; i++) {
+    cluster.fork();
+  }
+
+  console.log(`Primary ${process.pid} active`);
+} else {
+  startWorker();
+}
