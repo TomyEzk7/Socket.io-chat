@@ -1,0 +1,55 @@
+
+let counter = 0;
+
+const socket = io({
+    auth: {
+        username: prompt('Your name'),
+        serverOffset: 0
+        },
+
+        AckTimeout: 5000, 
+        retries: 3
+});
+
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const messages = document.getElementById('messages');    
+form.addEventListener('submit', e => {
+    e.preventDefault();
+    if (input.value) {
+        const clientOffset = `${socket.id}-${counter++}`;
+        socket.emit('chat message', input.value, clientOffset);
+        input.value = '';
+    }
+});
+
+socket.on('chat message', (msg, serverOffset, clientAck) => { // El clientAck es lo que espera el servidor para saber que el cliente recibio el evento
+const li = document.createElement('li');
+li.textContent = msg;
+messages.appendChild(li);
+messages.scrollTop = messages.scrollHeight;
+
+socket.auth.serverOffset = serverOffset;
+
+if (typeof clientAck === 'function') {
+
+clientAck();
+    }
+});
+
+socket.on('private message', (msg, serverOffset, clientAck) => {
+        // Este es el mensaje que se manda privado. Revisar como manejar desde servidor
+})
+    
+const toggleButton = document.getElementById('toggle-btn');
+
+toggleButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (socket.connected) {
+    toggleButton.innerText = 'Connect';
+    socket.disconnect();
+    } else {
+    toggleButton.innerText = 'Disconnect';
+    socket.connect();
+    }
+});

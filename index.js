@@ -12,19 +12,31 @@ import { open } from 'sqlite';
 import cluster from 'node:cluster';
 import { availableParallelism } from 'node:os';
 
-import { createAdapter, setupPrimary } from '@socket.io/cluster-adapter';
-
-import { createClient } from 'redis'
+/* ==== REDIS ADAPTER ==== */
+import { createClient } from 'redis';
+import { createAdapter } from '@socket.io/redis-adapter';
 
 /* =========================
-   CONFIG
+  CONFIG
 ========================= */
 
 const PORT = process.env.PORT ?? 3000;
 const HOST = '0.0.0.0';
 
 /* =========================
-   HELPERS
+  REDIS
+========================= */
+const pubClient = createClient({
+  url: 'redis://localhost:6379'
+});
+const subClient = pubClient.duplicate();
+
+await pubClient.connect();
+await subClient.connect();
+
+
+/* =========================
+  HELPERS
 ========================= */
 
 function emitWithRetry(socket, event, args, retries = 3) {
@@ -40,7 +52,7 @@ function emitWithRetry(socket, event, args, retries = 3) {
 }
 
 /* =========================
-   WORKER LOGIC
+  WORKER LOGIC
 ========================= */
 
 async function startWorker() {
@@ -49,10 +61,10 @@ async function startWorker() {
 
   const io = new Server(server, {
     connectionStateRecovery: {},
-    adapter: createAdapter()
+    adapter: createAdapter (pubClient, subClient)
   });
 
-  /* ---------- DB ---------- */
+/* ---------- DB ---------- */
 
   const db = await open({
     filename: 'Socket.io-chat.db',
@@ -84,7 +96,7 @@ async function startWorker() {
     );
   `);
 
-  /* ---------- EXPRESS ---------- */
+/* ---------- EXPRESS ---------- */
 
   app.use(logger('dev'));
 
@@ -95,15 +107,13 @@ async function startWorker() {
     res.sendFile(join(__dirname, 'client', 'index.html'));
   });
 
-  /* ---------- STATE ---------- */
-
-  const users = new Map();
+/* ---------- STATE ---------- */
 
   function createPrivateRoom(a, b) {
     return [a, b].sort((x, y) => x - y).join('#');
   }
 
-  /* ---------- SOCKET.IO ---------- */
+/* ---------- SOCKET.IO ---------- */
 
   io.on('connection', async (socket) => {
     const { username, serverOffset = 0 } = socket.handshake.auth;
@@ -130,9 +140,11 @@ async function startWorker() {
     }
 
     socket.userId = userId;
-    users.set(userId, socket.id);
+    
+    const userRoom = `user#${userId}`;
+    socket.join(userRoom);
 
-    /* ----- CHAT GLOBAL ----- */
+/* ----- CHAT GLOBAL ----- */
 
     socket.on('chat message', async (msg, clientOffset, ack) => {
       try {
@@ -149,7 +161,7 @@ async function startWorker() {
       }
     });
 
-    /* ----- CHAT PRIVADO ----- */
+/* ----- CHAT PRIVADO ----- */
 
     socket.on('private message', async ({ toUserId, msg }, _, ack) => {
       if (!toUserId || !msg) return;
@@ -157,16 +169,12 @@ async function startWorker() {
       const room = createPrivateRoom(socket.userId, toUserId);
 
       socket.join(room);
-
-      const toSocketId = users.get(toUserId);
-      if (toSocketId) {
-        io.sockets.sockets.get(toSocketId)?.join(room);
-      }
+      io.to(`user#${toUserId}`).socketsJoin(room);
 
       const result = await db.run(
         `INSERT INTO private_messages
-         (from_user_id, to_user_id, content)
-         VALUES (?, ?, ?)`,
+        (from_user_id, to_user_id, content)
+        VALUES (?, ?, ?)`,
         socket.userId,
         toUserId,
         msg
@@ -181,7 +189,7 @@ async function startWorker() {
       ack?.();
     });
 
-    /* ----- RECOVERY ----- */
+/* ----- RECOVERY ----- */
 
     if (!socket.recovered) {
       await db.each(
@@ -194,7 +202,6 @@ async function startWorker() {
     }
 
     socket.on('disconnect', () => {
-      users.delete(socket.userId);
       console.log('A user has disconnected!')
     });
   });
@@ -205,7 +212,7 @@ async function startWorker() {
 }
 
 /* =========================
-   CLUSTER
+  CLUSTER
 ========================= */
 
 if (cluster.isPrimary) {
@@ -215,8 +222,8 @@ if (cluster.isPrimary) {
   for (let i = 0; i < cpus; i++) {
     cluster.fork();
   }
-
   console.log(`Primary ${process.pid} active`);
-} else {
-  startWorker();
-}
+  return;
+} 
+
+startWorker();
