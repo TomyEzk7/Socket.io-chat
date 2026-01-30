@@ -24,18 +24,6 @@ const PORT = process.env.PORT ?? 3000;
 const HOST = '0.0.0.0';
 
 /* =========================
-  REDIS
-========================= */
-const pubClient = createClient({
-  url: 'redis://localhost:6379'
-});
-const subClient = pubClient.duplicate();
-
-await pubClient.connect();
-await subClient.connect();
-
-
-/* =========================
   HELPERS
 ========================= */
 
@@ -56,12 +44,23 @@ function emitWithRetry(socket, event, args, retries = 3) {
 ========================= */
 
 async function startWorker() {
+  const pubClient = createClient({
+    url: 'redis://localhost:6379'
+  });
+  const subClient = pubClient.duplicate();
+
+  pubClient.on('error', err => console.error('Redis error:', err));
+  subClient.on('error', err => console.error('Redis error:', err));
+
+  await pubClient.connect();
+  await subClient.connect();
+
   const app = express();
   const server = createServer(app);
 
   const io = new Server(server, {
     connectionStateRecovery: {},
-    adapter: createAdapter (pubClient, subClient)
+    adapter: createAdapter(pubClient, subClient)
   });
 
 /* ---------- DB ---------- */
@@ -216,14 +215,12 @@ async function startWorker() {
 ========================= */
 
 if (cluster.isPrimary) {
-  setupPrimary();
-
   const cpus = availableParallelism();
   for (let i = 0; i < cpus; i++) {
     cluster.fork();
   }
   console.log(`Primary ${process.pid} active`);
-  return;
+} else {
+    startWorker();
 } 
 
-startWorker();

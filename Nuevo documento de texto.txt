@@ -1,0 +1,78 @@
+=== MEJORAS PARA ESTE PROYECTO ===
+
+
+1. Autenticación más real
+Reemplazar el prompt por un login simple con usuario y password.
+Hashear passwords con bcrypt antes de guardarlos.
+Emitir un JWT al loguearse correctamente.
+Usar ese JWT para autenticar el socket en la conexión (io.use + verificación del token).
+Asociar el userId al socket una vez validado.
+Documentar en el README el flujo completo: login HTTP → JWT → conexión socket autenticada.
+Bonus: agregar roles (admin / user) y validar permisos en eventos críticos.
+
+2. Estado de usuarios (online / offline / typing)
+Mantener un listado de usuarios conectados (en memoria + Redis).
+Emitir eventos user:connected y user:disconnected.
+Actualizar el estado al conectar/desconectar sockets.
+Implementar indicador “escribiendo…” con eventos temporales.
+Sincronizar estado entre workers usando Redis para evitar inconsistencias.
+
+3. Historial de mensajes bien implementado
+Persistir mensajes con timestamp.
+Implementar paginación (limit + offset o cursor).
+Cargar mensajes antiguos al hacer scroll hacia arriba.
+Diferenciar mensajes propios vs ajenos en el frontend.
+Formatear timestamps de forma legible.
+Evitar enviar todo el historial en cada conexión (performance).
+
+4. Rooms públicas (tipo Slack)
+Agregar rooms públicas además del chat global.
+Permitir join / leave dinámico de rooms.
+Persistir mensajes por room en la base de datos.
+Mantener lista de usuarios por room.
+Restringir creación/eliminación de rooms solo a admins.
+Documentar el modelo de rooms en el README.
+
+5. Tests automatizados
+Tests unitarios para helpers (rooms, validaciones, rate limit).
+Tests de integración de socket usando socket.io-client.
+Usar base de datos en memoria o mockeada para testing.
+Testear conexión, envío de mensajes y permisos básicos.
+No hace falta cobertura total, pero sí demostrar criterio.
+
+6. Rate limiting y seguridad
+Limitar cantidad de mensajes por usuario por intervalo de tiempo.
+Prevenir spam y flood de mensajes.
+Sanitizar input para evitar XSS.
+Validar payloads de eventos socket.
+Manejar desconexión o penalización ante abuso.
+
+7. Métricas y observabilidad
+Contar usuarios activos.
+Contar mensajes por minuto.
+Loggear eventos importantes (conexión, error, disconnect).
+Usar logs estructurados (no solo console.log).
+Opcional: explicar cómo se integraría Prometheus/Grafana.
+Aunque no esté deployado, documentarlo.
+
+8. README sólido y profesional
+Descripción clara del proyecto y objetivo.
+Diagrama simple de arquitectura (cliente → socket → redis → db).
+Explicación del uso de cluster y Redis adapter.
+Cómo funciona el recovery de mensajes.
+Problemas reales que soluciona el sistema.
+Instrucciones claras para correr el proyecto localmente.
+
+9. Deploy real
+Deploy del backend en Railway / Fly.io / Render.
+Uso de Redis gestionado.
+Variables de entorno correctamente configuradas.
+Link público al proyecto funcionando.
+Aclarar limitaciones del entorno gratuito si existen.
+
+10. Detalles finales de calidad
+Archivo .env.example.
+Scripts npm claros (dev, start, test).
+ESLint y Prettier configurados.
+Commits limpios y descriptivos.
+Estructura de carpetas clara y coherente.
