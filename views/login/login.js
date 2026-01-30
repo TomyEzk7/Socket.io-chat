@@ -1,10 +1,11 @@
-// Tengo que mandar los datos del login al servidor para validar y devolver 
+
 
 async function login() {
 const username = document.getElementById('username').value;
 const password = document.getElementById('password').value;
 
-try { 
+try {
+    console.log({username, password}) 
     const res = await fetch('/login', {
         method: 'POST',
         headers: {'Content-Type': 'Application/json'},
@@ -17,8 +18,8 @@ try {
     }
     
 } catch (e) {
-    console.log('fetch error:', err);
-}}
+    console.log('fetch error:', e);
+}} // esto manda los datos del login al servidor y espera una respuesta
 
 document.getElementById('login-button').addEventListener('click', login)
 

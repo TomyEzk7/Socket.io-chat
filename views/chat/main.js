@@ -3,7 +3,7 @@ let counter = 0;
 
 const socket = io({
     auth: {
-        username: prompt('Your name'),
+        //username: prompt('Your name'),
         serverOffset: 0
         },
 

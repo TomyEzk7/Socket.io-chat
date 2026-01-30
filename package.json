@@ -5,9 +5,12 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "node --watch index.js "
+    "dev": "node --watch server.js"
   },
   "type": "module",
+  "imports": {
+    "#models/*": "./sqlite/models/*.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
