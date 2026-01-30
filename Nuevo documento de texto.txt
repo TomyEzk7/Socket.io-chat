@@ -3,9 +3,14 @@
 
 1. Autenticación más real
 Reemplazar el prompt por un login simple con usuario y password.
+
 Hashear passwords con bcrypt antes de guardarlos.
-Emitir un JWT al loguearse correctamente.
+
+Emitir un JWT al loguearse 
+correctamente.
+
 Usar ese JWT para autenticar el socket en la conexión (io.use + verificación del token).
+
 Asociar el userId al socket una vez validado.
 Documentar en el README el flujo completo: login HTTP → JWT → conexión socket autenticada.
 Bonus: agregar roles (admin / user) y validar permisos en eventos críticos.

@@ -39,6 +39,10 @@ function emitWithRetry(socket, event, args, retries = 3) {
     });
 }
 
+async function validateCredentials(username, password) {
+  
+}
+
 /* =========================
   WORKER LOGIC
 ========================= */
@@ -103,8 +107,19 @@ async function startWorker() {
   app.use(express.static(join(__dirname, 'client')));
 
   app.get('/', (req, res) => {
-    res.sendFile(join(__dirname, 'client', 'index.html'));
+    res.sendFile(join(__dirname, 'login', 'login.html'));
   });
+
+  app.post('/login', async (req, res) => {
+    const { user, pass } = req.body;
+    const valid = await validateCredentials(user, pass);
+    
+    if (valid) {
+      res.redirect('/client/index.html')
+    } else {
+      res.send('Login inválido')
+    }
+  })
 
 /* ---------- STATE ---------- */
 
